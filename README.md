@@ -137,3 +137,78 @@ The helper resolves views in the following priority order:
 - **No call site changes needed** — all existing `view(theme(...))` calls work without modification.
 - **Proper HTTP 404 response** — correct status code for SEO and API clients.
 - **Clearer intent** — a missing page is an explicit 404, not a null state to be handled by callers.
+
+---
+
+## Optional Further Improvements
+
+### Themed Error Pages
+
+Since the app is multisite, error pages (404, 500, etc.) can also be themed per account/domain. Override `renderHttpException()` in `app/Exceptions/Handler.php` to resolve error views through the same priority chain as `theme()`:
+
+```php
+<?php
+
+namespace App\Exceptions;
+
+use Illuminate\Foundation\Exceptions\Handler as ExceptionHandler;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
+
+class Handler extends ExceptionHandler
+{
+    protected function renderHttpException(HttpExceptionInterface $e)
+    {
+        $status = $e->getStatusCode();
+
+        $account = getAccount();
+        $candidates = [
+            'frontend.themes.' . $account?->id . ".errors.{$status}",
+            'frontend.themes.' . session('theme') . ".errors.{$status}",
+            'frontend.themes.default.' . "errors.{$status}",
+            "errors.{$status}",
+        ];
+
+        foreach ($candidates as $view) {
+            if (view()->exists($view)) {
+                return response()->view($view, ['exception' => $e], $status);
+            }
+        }
+
+        return parent::renderHttpException($e);
+    }
+}
+```
+
+> **Note:** We intentionally avoid calling `theme()` here to prevent infinite recursion — since `theme()` itself calls `abort(404)`, using it inside the exception handler would cause an infinite loop. Instead, we resolve the view candidates manually with `view()->exists()`.
+
+> **Laravel 11:** `Handler.php` may not exist by default as it was consolidated into `bootstrap/app.php`. The equivalent approach differs slightly in that version.
+
+#### Error View Structure
+
+Theme-specific error views should be placed following the same directory convention:
+
+```
+resources/views/
+  frontend/
+    themes/
+      default/
+        errors/
+          404.blade.php
+          500.blade.php
+      {theme_slug}/
+        errors/
+          404.blade.php
+      {account_id}/
+        errors/
+          404.blade.php
+  errors/          ← Laravel default fallback
+    404.blade.php
+```
+
+#### Error View Resolution Order
+
+1. `frontend.themes.{account_id}.errors.{status}` — account-specific error view
+2. `frontend.themes.{theme_slug}.errors.{status}` — theme-specific error view
+3. `frontend.themes.default.errors.{status}` — default theme error view
+4. `errors.{status}` — Laravel's built-in error view
+5. `parent::renderHttpException()` — Laravel's final fallback handler
