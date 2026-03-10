@@ -59,7 +59,7 @@ if (!function_exists('theme')) {
             return $view;
         }
 
-        return null;
+        abort(404);
     }
 }
 
